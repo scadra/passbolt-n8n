@@ -1,0 +1,22 @@
+{
+	"node": "n8n-nodes-passbolt.passbolt",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Utility"],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://gitlab.com/switch-case/passbolt-n8n"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://gitlab.com/switch-case/passbolt-n8n"
+			}
+		]
+	},
+	"alias": ["password", "secret", "vault", "passbolt"],
+	"subcategories": {
+		"Utility": ["Password Management"]
+	}
+}
