@@ -48,3 +48,31 @@ export async function getDecryptedPrivateKey(
 	const privateKey = await openpgp.readPrivateKey({ armoredKey: normalized });
 	return openpgp.decryptKey({ privateKey, passphrase });
 }
+
+/**
+ * Fetches the Passbolt server's OpenPGP public key via `GET /auth/verify.json`.
+ *
+ * Routes through `context.helpers.httpRequest` so n8n proxy and SSL settings
+ * (e.g. "Ignore SSL Issues") are respected. This function is also the natural
+ * probe used by n8n's credential-testing infrastructure.
+ *
+ * @param context - n8n execution context providing `helpers.httpRequest`.
+ * @param serverUrl - Base URL of the Passbolt instance (no trailing slash).
+ * @returns The server's parsed OpenPGP public key.
+ * @throws If the HTTP request fails or the response body cannot be parsed.
+ */
+export async function getServerPublicKey(
+	context: IExecuteFunctions,
+	serverUrl: string,
+): Promise<openpgp.Key> {
+	const opts: IHttpRequestOptions = {
+		method: 'GET',
+		url: `${serverUrl}${PASSBOLT_API.AUTH_VERIFY}`,
+		headers: { 'Content-Type': 'application/json' },
+	};
+	const json = (await context.helpers.httpRequest(opts)) as PassboltApiResponse<{
+		fingerprint: string;
+		keydata: string;
+	}>;
+	return openpgp.readKey({ armoredKey: json.body.keydata });
+}
