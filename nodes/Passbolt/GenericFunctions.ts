@@ -28,6 +28,21 @@ const CHALLENGE_EXPIRY_SECONDS = 600;
 function normalizeServerUrl(url: string): string {
 	return url.replace(/\/+$/, '');
 }
+const TOKEN_TTL_MS = 5 * 60 * 1000;
+const TOKEN_REFRESH_BUFFER_MS = 30_000;
+const PAGE_LIMIT = 100;
+
+/**
+ * Cached JWT token pair with metadata for TTL-based eviction.
+ * @property accessToken - Short-lived Bearer token for API requests.
+ * @property refreshToken - Long-lived token used to renew `accessToken`.
+ * @property expiresAt - `Date.now()` timestamp after which both tokens are invalid.
+ */
+interface TokenCache {
+	accessToken: string;
+	refreshToken: string;
+	expiresAt: number;
+}
 /**
  * Parses and decrypts an ASCII-armored OpenPGP private key.
  *
@@ -171,4 +186,84 @@ export async function encryptForUser(
 		encryptionKeys: recipientPublicKey,
 		signingKeys: signingPrivateKey,
 	}) as Promise<string>;
+}
+
+/**
+ * Performs a full GPG challenge-response authentication against the Passbolt server
+ * and returns a fresh JWT token pair.
+ *
+ * Steps:
+ * 1. Fetch the server's public key (via n8n HTTP helper).
+ * 2. Build a JSON challenge containing a random `verify_token` and encrypt it for the server.
+ * 3. POST the encrypted challenge to `/auth/jwt/login.json` (via n8n HTTP helper).
+ * 4. Decrypt the server's response and verify the `verify_token` matches to prevent MITM.
+ *
+ * @param context - n8n execution context providing `helpers.httpRequest`.
+ * @param serverUrl - Base URL of the Passbolt instance (no trailing slash).
+ * @param userId - UUID of the authenticating user.
+ * @param privateKey - The user's decrypted OpenPGP private key.
+ * @returns A fresh `TokenCache` entry containing access/refresh tokens and expiry.
+ * @throws If the login HTTP request fails or the server's `verify_token` does not match.
+ */
+async function authenticate(
+	context: IExecuteFunctions,
+	serverUrl: string,
+	userId: string,
+	privateKey: openpgp.PrivateKey,
+): Promise<TokenCache> {
+	const serverPublicKey = await getServerPublicKey(context, serverUrl);
+
+	const verifyToken = uuidv4();
+	const challengePayload: PassboltAuthChallenge = {
+		version: CHALLENGE_VERSION,
+		domain: serverUrl,
+		verify_token: verifyToken,
+		verify_token_expiry: Math.floor(Date.now() / 1000) + CHALLENGE_EXPIRY_SECONDS,
+	};
+	const encryptedChallenge = await encryptForServer(
+		JSON.stringify(challengePayload),
+		serverPublicKey,
+		privateKey,
+	);
+
+	let loginJson: PassboltApiResponse<{ challenge: string }>;
+	try {
+		const opts: IHttpRequestOptions = {
+			method: 'POST',
+			url: `${serverUrl}${PASSBOLT_API.AUTH_LOGIN}`,
+			headers: { 'Content-Type': 'application/json' },
+			body: { user_id: userId, challenge: encryptedChallenge },
+		};
+		loginJson = (await context.helpers.httpRequest(opts)) as PassboltApiResponse<{
+			challenge: string;
+		}>;
+	} catch (error) {
+		// Strip PGP-armored blocks from the error (may contain key material or token data)
+		// and truncate to prevent leaking full server responses into logs.
+		const rawError = String((error as Error).message ?? error);
+		const sanitizedError = rawError
+			.replace(/-----BEGIN PGP[^-]*-----[\s\S]*?-----END PGP[^-]*-----/g, '[PGP BLOCK REDACTED]')
+			.slice(0, 200);
+		throw new NodeOperationError(context.getNode(), `Passbolt auth failed: ${sanitizedError}`);
+	}
+
+	const decryptedResponse = await decryptMessage(loginJson.body.challenge, privateKey);
+	let responseData: PassboltAuthChallengeResponse;
+	try {
+		responseData = JSON.parse(decryptedResponse) as PassboltAuthChallengeResponse;
+	} catch {
+		throw new NodeApiError(context.getNode(), {}, {
+			message: 'Server challenge response is not valid JSON after decryption',
+		});
+	}
+
+	if (responseData.verify_token !== verifyToken) {
+		throw new NodeOperationError(context.getNode(), 'Server verify_token mismatch — possible MITM attack');
+	}
+
+	return {
+		accessToken: responseData.access_token,
+		refreshToken: responseData.refresh_token,
+		expiresAt: Date.now() + TOKEN_TTL_MS,
+	};
 }
