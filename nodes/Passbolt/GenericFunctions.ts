@@ -43,6 +43,31 @@ interface TokenCache {
 	refreshToken: string;
 	expiresAt: number;
 }
+
+/**
+ * In-process JWT cache keyed by `${serverUrl}::${userId}`.
+ * Shared across all concurrent executions; evicted lazily on write and periodically.
+ */
+const tokenCache = new Map<string, TokenCache>();
+
+/**
+ * Removes stale entries from {@link tokenCache}.
+ * Called periodically so the map does not grow unboundedly in long-running processes.
+ * @internal
+ */
+function evictExpiredTokens(): void {
+	const cutoff = Date.now() - TOKEN_TTL_MS;
+	for (const [key, entry] of tokenCache) {
+		if (entry.expiresAt < cutoff) {
+			tokenCache.delete(key);
+		}
+	}
+}
+
+// Evict stale entries every TOKEN_TTL_MS * 2 so the map cannot grow
+// unboundedly in long-running n8n worker processes.
+setInterval(evictExpiredTokens, TOKEN_TTL_MS * 2).unref();
+
 /**
  * Parses and decrypts an ASCII-armored OpenPGP private key.
  *
@@ -313,4 +338,42 @@ async function refreshAccessToken(
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Resolves a valid JWT access token using a 3-tier strategy:
+ * 1. Return the cached token if it has not expired (minus a buffer).
+ * 2. Attempt a silent refresh using the stored refresh token.
+ * 3. Fall back to a full GPG challenge-response authentication.
+ *
+ * @param context - n8n execution context threaded through to all HTTP helpers.
+ * @param serverUrl - Base URL of the Passbolt instance (no trailing slash).
+ * @param userId - UUID of the authenticating user.
+ * @param privateKey - The user's decrypted OpenPGP private key (used only for full auth).
+ * @returns A valid JWT access token string.
+ */
+async function getAccessToken(
+	context: IExecuteFunctions,
+	serverUrl: string,
+	userId: string,
+	privateKey: openpgp.PrivateKey,
+): Promise<string> {
+	const cacheKey = `${serverUrl}::${userId}`;
+	const cached = tokenCache.get(cacheKey);
+
+	if (cached && cached.expiresAt > Date.now() + TOKEN_REFRESH_BUFFER_MS) {
+		return cached.accessToken;
+	}
+
+	if (cached?.refreshToken) {
+		const refreshed = await refreshAccessToken(context, serverUrl, userId, cached.refreshToken);
+		if (refreshed) {
+			tokenCache.set(cacheKey, refreshed);
+			return refreshed.accessToken;
+		}
+	}
+
+	const tokens = await authenticate(context, serverUrl, userId, privateKey);
+	tokenCache.set(cacheKey, tokens);
+	return tokens.accessToken;
 }
