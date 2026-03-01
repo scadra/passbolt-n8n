@@ -377,3 +377,65 @@ async function getAccessToken(
 	tokenCache.set(cacheKey, tokens);
 	return tokens.accessToken;
 }
+
+/**
+ * Makes an authenticated HTTP request to the Passbolt API.
+ *
+ * Reads credentials from the n8n credential store, decrypts the private key,
+ * and acquires a JWT access token (via cache, refresh, or full GPG auth).
+ * All HTTP — including auth — goes through `this.helpers.httpRequest` so n8n
+ * proxy and SSL settings are respected end-to-end.
+ *
+ * @this {IExecuteFunctions} n8n execution context used for credential access and HTTP.
+ * @param method - HTTP method (GET, POST, PUT, DELETE, …).
+ * @param endpoint - API path including leading slash (e.g. `/resources.json`).
+ * @param body - Optional request body (omitted when empty).
+ * @param qs - Optional query-string parameters.
+ * @returns The parsed JSON response body.
+ * @throws `NodeApiError` on any HTTP or network failure.
+ */
+export async function passboltApiRequest(
+	this: IExecuteFunctions,
+	method: IHttpRequestMethods,
+	endpoint: string,
+	body?: object,
+	qs?: Record<string, string | number | boolean>,
+	ctx?: PassboltContext,
+): Promise<JsonObject> {
+	let serverUrl: string;
+	let userId: string;
+	let privateKey: openpgp.PrivateKey;
+
+	if (ctx) {
+		serverUrl = ctx.serverUrl;
+		userId = ctx.userId;
+		privateKey = ctx.privateKey;
+	} else {
+		const credentials = await this.getCredentials<PassboltApiCredentials>('passboltApi');
+		serverUrl = normalizeServerUrl(credentials.serverUrl);
+		userId = credentials.userId;
+		privateKey = await getDecryptedPrivateKey(credentials.privateKey, credentials.passphrase);
+	}
+
+	const accessToken = await getAccessToken(this, serverUrl, userId, privateKey);
+
+	const opts: IHttpRequestOptions = {
+		method,
+		url: `${serverUrl}${endpoint}`,
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			'Content-Type': 'application/json',
+		},
+		qs: qs ?? {},
+	};
+
+	if (body && Object.keys(body).length > 0) {
+		opts.body = body;
+	}
+
+	try {
+		return (await this.helpers.httpRequest(opts)) as JsonObject;
+	} catch (error) {
+		throw new NodeApiError(this.getNode(), error as JsonObject);
+	}
+}
