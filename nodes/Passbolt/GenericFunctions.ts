@@ -267,3 +267,50 @@ async function authenticate(
 		expiresAt: Date.now() + TOKEN_TTL_MS,
 	};
 }
+
+/**
+ * Attempts to obtain a new access token using the stored refresh token.
+ *
+ * Returns `null` on any failure so the caller can fall through to full re-authentication
+ * without surfacing transient network or parse errors.
+ *
+ * @param context - n8n execution context providing `helpers.httpRequest`.
+ * @param serverUrl - Base URL of the Passbolt instance (no trailing slash).
+ * @param userId - UUID of the authenticating user.
+ * @param refreshToken - The current refresh token.
+ * @returns A fresh `TokenCache` entry, or `null` if the refresh failed.
+ */
+async function refreshAccessToken(
+	context: IExecuteFunctions,
+	serverUrl: string,
+	userId: string,
+	refreshToken: string,
+): Promise<TokenCache | null> {
+	try {
+		// Passbolt's JWT refresh endpoint expects the refresh token in the
+		// Authorization header as `Bearer <refresh_token>`, not in the request
+		// body. This is a Passbolt-specific convention documented in their API
+		// (https://www.passbolt.com/docs/api/authentication) and is intentional,
+		// not a mistake. Do not move the token to the body.
+		const opts: IHttpRequestOptions = {
+			method: 'POST',
+			url: `${serverUrl}${PASSBOLT_API.AUTH_REFRESH}`,
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${refreshToken}`,
+			},
+			body: { user_id: userId },
+		};
+		// httpRequest throws on non-2xx, which the outer catch converts to null.
+		const json = (await context.helpers.httpRequest(
+			opts,
+		)) as PassboltApiResponse<PassboltTokenResponse>;
+		return {
+			accessToken: json.body.access_token,
+			refreshToken: json.body.refresh_token,
+			expiresAt: Date.now() + TOKEN_TTL_MS,
+		};
+	} catch {
+		return null;
+	}
+}
