@@ -615,3 +615,37 @@ export async function encryptSecretForUserWithCtx(
 	const recipientPublicKey = await openpgp.readKey({ armoredKey: recipientArmoredPublicKey });
 	return encryptForUser(plaintext, recipientPublicKey, ctx.privateKey);
 }
+
+/**
+ * Resolves the UUID of a Passbolt resource type by its slug.
+ *
+ * Fetches all resource types from `/resource-types.json` and returns the `id`
+ * of the entry whose `slug` matches the given value.
+ * Must be called with `.call(this, ...)` from an `IExecuteFunctions` context.
+ *
+ * @this {IExecuteFunctions} n8n execution context forwarded to `passboltApiRequest`.
+ * @param slug - Resource type slug (e.g. `'password-and-description'`).
+ * @returns The UUID of the matching resource type.
+ * @throws If no resource type with the given slug exists on the server.
+ * @throws `NodeApiError` if the HTTP request to `/resource-types.json` fails.
+ */
+export async function getResourceTypeId(
+	this: IExecuteFunctions,
+	slug: string,
+	ctx?: PassboltContext,
+): Promise<string> {
+	const types = (await passboltApiRequest.call(
+		this,
+		'GET',
+		PASSBOLT_API.RESOURCE_TYPES,
+		undefined,
+		undefined,
+		ctx,
+	)) as unknown as PassboltResourceType[];
+
+	const matched = types.find((t) => t.slug === slug);
+	if (!matched) {
+		throw new NodeOperationError(this.getNode(), `Resource type "${slug}" not found`);
+	}
+	return matched.id;
+}
