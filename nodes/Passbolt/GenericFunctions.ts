@@ -439,3 +439,52 @@ export async function passboltApiRequest(
 		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
+
+/**
+ * Fetches all pages of a paginated Passbolt API endpoint.
+ *
+ * Iterates using `page` + `limit=PAGE_LIMIT` query parameters until a page
+ * returns fewer items than the limit, indicating the last page.
+ * Must be called with `.call(this, ...)` from an `IExecuteFunctions` context.
+ *
+ * @this {IExecuteFunctions} n8n execution context forwarded to `passboltApiRequest`.
+ * @param method - HTTP method (typically GET).
+ * @param endpoint - API path including leading slash.
+ * @param body - Optional request body object.
+ * @param qs - Optional base query-string parameters (`page` and `limit` are managed internally).
+ * @returns Flat array of all items across all pages.
+ * @throws `NodeApiError` on any HTTP or network failure.
+ */
+export async function passboltApiRequestAllItems(
+	this: IExecuteFunctions,
+	method: IHttpRequestMethods,
+	endpoint: string,
+	body?: object,
+	qs?: Record<string, string | number | boolean>,
+	ctx?: PassboltContext,
+): Promise<JsonObject[]> {
+	const allQs = { ...qs };
+	let page = 1;
+	const limit = PAGE_LIMIT;
+	const allItems: JsonObject[] = [];
+
+	let hasMore = true;
+	while (hasMore) {
+		allQs['page'] = page;
+		allQs['limit'] = limit;
+		const response = (await passboltApiRequest.call(this, method, endpoint, body, allQs, ctx)) as
+			| JsonObject[]
+			| JsonObject;
+
+		const items = Array.isArray(response) ? response : [response];
+		allItems.push(...items);
+
+		if (items.length < limit) {
+			hasMore = false;
+		} else {
+			page++;
+		}
+	}
+
+	return allItems;
+}
