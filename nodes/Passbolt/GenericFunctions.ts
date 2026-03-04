@@ -439,3 +439,213 @@ export async function passboltApiRequest(
 		throw new NodeApiError(this.getNode(), error as JsonObject);
 	}
 }
+
+/**
+ * Fetches all pages of a paginated Passbolt API endpoint.
+ *
+ * Iterates using `page` + `limit=PAGE_LIMIT` query parameters until a page
+ * returns fewer items than the limit, indicating the last page.
+ * Must be called with `.call(this, ...)` from an `IExecuteFunctions` context.
+ *
+ * @this {IExecuteFunctions} n8n execution context forwarded to `passboltApiRequest`.
+ * @param method - HTTP method (typically GET).
+ * @param endpoint - API path including leading slash.
+ * @param body - Optional request body object.
+ * @param qs - Optional base query-string parameters (`page` and `limit` are managed internally).
+ * @returns Flat array of all items across all pages.
+ * @throws `NodeApiError` on any HTTP or network failure.
+ */
+export async function passboltApiRequestAllItems(
+	this: IExecuteFunctions,
+	method: IHttpRequestMethods,
+	endpoint: string,
+	body?: object,
+	qs?: Record<string, string | number | boolean>,
+	ctx?: PassboltContext,
+): Promise<JsonObject[]> {
+	const allQs = { ...qs };
+	let page = 1;
+	const limit = PAGE_LIMIT;
+	const allItems: JsonObject[] = [];
+
+	let hasMore = true;
+	while (hasMore) {
+		allQs['page'] = page;
+		allQs['limit'] = limit;
+		const response = (await passboltApiRequest.call(this, method, endpoint, body, allQs, ctx)) as
+			| JsonObject[]
+			| JsonObject;
+
+		const items = Array.isArray(response) ? response : [response];
+		allItems.push(...items);
+
+		if (items.length < limit) {
+			hasMore = false;
+		} else {
+			page++;
+		}
+	}
+
+	return allItems;
+}
+
+/**
+ * Decrypts a Passbolt secret using the credentials stored in n8n.
+ *
+ * Reads the private key and passphrase from the `passboltApi` credential.
+ * Must be called with `.call(this, ...)` from an `IExecuteFunctions` context.
+ *
+ * @this {IExecuteFunctions} n8n execution context used for credential access.
+ * @param encryptedData - ASCII-armored PGP message to decrypt.
+ * @returns Decrypted plaintext (typically a JSON string for modern resource types).
+ * @throws If the private key passphrase is wrong, the key is malformed, or decryption fails.
+ */
+export async function decryptSecret(
+	this: IExecuteFunctions,
+	encryptedData: string,
+): Promise<string> {
+	const credentials = await this.getCredentials<PassboltApiCredentials>('passboltApi');
+	const privateKey = await getDecryptedPrivateKey(credentials.privateKey, credentials.passphrase);
+	return decryptMessage(encryptedData, privateKey);
+}
+
+/**
+ * Encrypts a secret for a specific Passbolt user.
+ *
+ * Reads the caller's private key from n8n credentials for signing, then
+ * encrypts the message with the recipient's armored public key.
+ * Must be called with `.call(this, ...)` from an `IExecuteFunctions` context.
+ *
+ * @this {IExecuteFunctions} n8n execution context used for credential access.
+ * @param plaintext - The secret text to encrypt (typically a JSON string).
+ * @param recipientArmoredPublicKey - ASCII-armored OpenPGP public key of the recipient.
+ * @returns ASCII-armored PGP message encrypted for the recipient.
+ * @throws If the private key passphrase is wrong, either key is malformed, or encryption fails.
+ */
+export async function encryptSecretForUser(
+	this: IExecuteFunctions,
+	plaintext: string,
+	recipientArmoredPublicKey: string,
+): Promise<string> {
+	const credentials = await this.getCredentials<PassboltApiCredentials>('passboltApi');
+	const privateKey = await getDecryptedPrivateKey(credentials.privateKey, credentials.passphrase);
+	const recipientPublicKey = await openpgp.readKey({ armoredKey: recipientArmoredPublicKey });
+	return encryptForUser(plaintext, recipientPublicKey, privateKey);
+}
+
+/**
+ * Encrypts a secret for the authenticated user themselves.
+ *
+ * Derives the public key from the user's own private key so that the secret
+ * can be stored and later decrypted by the same user.
+ * Must be called with `.call(this, ...)` from an `IExecuteFunctions` context.
+ *
+ * @this {IExecuteFunctions} n8n execution context used for credential access.
+ * @param plaintext - The secret text to encrypt (typically a JSON string).
+ * @returns ASCII-armored PGP message encrypted for self.
+ * @throws If the private key passphrase is wrong, the key is malformed, or encryption fails.
+ */
+export async function encryptSecretForSelf(
+	this: IExecuteFunctions,
+	plaintext: string,
+): Promise<string> {
+	const credentials = await this.getCredentials<PassboltApiCredentials>('passboltApi');
+	const privateKey = await getDecryptedPrivateKey(credentials.privateKey, credentials.passphrase);
+	const publicKey = privateKey.toPublic();
+	return encryptForUser(plaintext, publicKey, privateKey);
+}
+
+/**
+ * Reads the `passboltApi` credential once, decrypts the private key, and
+ * returns a `PassboltContext` that can be forwarded to subsequent API calls
+ * to avoid repeated key decryptions within the same handler invocation.
+ *
+ * @param ef - n8n execution context providing credential access.
+ * @returns A fully resolved `PassboltContext`.
+ */
+export async function getCredentialsAndPrivateKey(ef: IExecuteFunctions): Promise<PassboltContext> {
+	const credentials = await ef.getCredentials<PassboltApiCredentials>('passboltApi');
+	const serverUrl = normalizeServerUrl(credentials.serverUrl);
+	const privateKey = await getDecryptedPrivateKey(credentials.privateKey, credentials.passphrase);
+	return { serverUrl, userId: credentials.userId, privateKey };
+}
+
+/**
+ * Decrypts a Passbolt secret using an already-resolved `PassboltContext`.
+ *
+ * @param encryptedData - ASCII-armored PGP message to decrypt.
+ * @param ctx - Pre-resolved context containing the decrypted private key.
+ * @returns Decrypted plaintext string.
+ */
+export async function decryptSecretWithCtx(
+	encryptedData: string,
+	ctx: PassboltContext,
+): Promise<string> {
+	return decryptMessage(encryptedData, ctx.privateKey);
+}
+
+/**
+ * Encrypts a secret for the authenticated user using an already-resolved context.
+ *
+ * @param plaintext - The secret text to encrypt.
+ * @param ctx - Pre-resolved context containing the decrypted private key.
+ * @returns ASCII-armored PGP message encrypted for self.
+ */
+export async function encryptSecretForSelfWithCtx(
+	plaintext: string,
+	ctx: PassboltContext,
+): Promise<string> {
+	const publicKey = ctx.privateKey.toPublic();
+	return encryptForUser(plaintext, publicKey, ctx.privateKey);
+}
+
+/**
+ * Encrypts a secret for a specific user using an already-resolved context.
+ *
+ * @param plaintext - The secret text to encrypt.
+ * @param recipientArmoredPublicKey - ASCII-armored OpenPGP public key of the recipient.
+ * @param ctx - Pre-resolved context providing the signing private key.
+ * @returns ASCII-armored PGP message encrypted for the recipient.
+ */
+export async function encryptSecretForUserWithCtx(
+	plaintext: string,
+	recipientArmoredPublicKey: string,
+	ctx: PassboltContext,
+): Promise<string> {
+	const recipientPublicKey = await openpgp.readKey({ armoredKey: recipientArmoredPublicKey });
+	return encryptForUser(plaintext, recipientPublicKey, ctx.privateKey);
+}
+
+/**
+ * Resolves the UUID of a Passbolt resource type by its slug.
+ *
+ * Fetches all resource types from `/resource-types.json` and returns the `id`
+ * of the entry whose `slug` matches the given value.
+ * Must be called with `.call(this, ...)` from an `IExecuteFunctions` context.
+ *
+ * @this {IExecuteFunctions} n8n execution context forwarded to `passboltApiRequest`.
+ * @param slug - Resource type slug (e.g. `'password-and-description'`).
+ * @returns The UUID of the matching resource type.
+ * @throws If no resource type with the given slug exists on the server.
+ * @throws `NodeApiError` if the HTTP request to `/resource-types.json` fails.
+ */
+export async function getResourceTypeId(
+	this: IExecuteFunctions,
+	slug: string,
+	ctx?: PassboltContext,
+): Promise<string> {
+	const types = (await passboltApiRequest.call(
+		this,
+		'GET',
+		PASSBOLT_API.RESOURCE_TYPES,
+		undefined,
+		undefined,
+		ctx,
+	)) as unknown as PassboltResourceType[];
+
+	const matched = types.find((t) => t.slug === slug);
+	if (!matched) {
+		throw new NodeOperationError(this.getNode(), `Resource type "${slug}" not found`);
+	}
+	return matched.id;
+}

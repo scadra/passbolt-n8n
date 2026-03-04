@@ -1,0 +1,112 @@
+import type {
+	IExecuteFunctions,
+	INodeExecutionData,
+	INodeType,
+	INodeTypeDescription,
+	JsonObject,
+} from 'n8n-workflow';
+import { NodeOperationError } from 'n8n-workflow';
+
+import { resourceCreate, resourceDelete, resourceGet, resourceGetAll, resourceUpdate } from './handlers/resource.handlers';
+
+import { resourceOperations, resourceFields } from './descriptions/ResourceDescription';
+import { Resource } from './constants';
+import { Param } from './handlers/utils';
+
+/** Type signature for per-item operation handlers. */
+type HandlerFn = (this: IExecuteFunctions, i: number) => Promise<JsonObject | JsonObject[]>;
+
+/**
+ * n8n community node integrating the Passbolt password manager API.
+ * Supports CRUD on resources, folders, users, and groups; sharing; and GPG utilities.
+ * @see https://www.passbolt.com/docs/api
+ */
+export class Passbolt implements INodeType {
+	description: INodeTypeDescription = {
+		displayName: 'Passbolt',
+		name: 'passbolt',
+		icon: 'file:passbolt.svg',
+		group: ['transform'],
+		version: 1,
+		subtitle: '={{$parameter["resource"] + ": " + $parameter["operation"]}}',
+		description: 'Interact with the Passbolt password manager API',
+		documentationUrl: 'https://gitlab.com/switch-case/passbolt-n8n',
+		usableAsTool: true,
+		defaults: {
+			name: 'Passbolt',
+		},
+		inputs: ['main'],
+		outputs: ['main'],
+		credentials: [
+			{
+				name: 'passboltApi',
+				required: true,
+			},
+		],
+		properties: [
+			{
+				displayName: 'Resource',
+				name: 'resource',
+				type: 'options',
+				noDataExpression: true,
+				options: [
+					{ name: 'Password (Resource)', value: Resource.RESOURCE },
+				],
+				default: Resource.RESOURCE,
+			},
+			...resourceOperations,
+			...resourceFields,
+		],
+	};
+
+	/**
+	 * Executes the node for all input items, dispatching by resource + operation.
+	 * Uses `continueOnFail()` to allow partial success on item-level errors.
+	 */
+	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+		const items = this.getInputData();
+		const returnData: INodeExecutionData[] = [];
+
+		const resource = this.getNodeParameter(Param.RESOURCE, 0);
+		const operation = this.getNodeParameter(Param.OPERATION, 0);
+
+		const handlers: Record<string, Record<string, HandlerFn>> = {
+			[Resource.RESOURCE]: {
+				create: resourceCreate,
+				delete: resourceDelete,
+				get: resourceGet,
+				getAll: resourceGetAll,
+				update: resourceUpdate,
+			},
+		};
+
+		for (let i = 0; i < items.length; i++) {
+			try {
+				const handler = handlers[resource]?.[operation];
+				if (!handler) {
+					const msg = handlers[resource]
+						? `Unsupported operation: ${operation}`
+						: `Unsupported resource: ${resource}`;
+					throw new NodeOperationError(this.getNode(), msg, { itemIndex: i });
+				}
+
+				const responseData = await handler.call(this, i);
+				const outputItems = Array.isArray(responseData) ? responseData : [responseData];
+				for (const item of outputItems) {
+					returnData.push({ json: item, pairedItem: { item: i } });
+				}
+			} catch (error) {
+				if (this.continueOnFail()) {
+					returnData.push({
+						json: { error: (error as Error).message },
+						pairedItem: { item: i },
+					});
+					continue;
+				}
+				throw error;
+			}
+		}
+
+		return [returnData];
+	}
+}
