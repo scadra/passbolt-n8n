@@ -65,6 +65,13 @@ export async function resourceCreate(this: IExecuteFunctions, i: number): Promis
 	return passboltApiRequest.call(this, HttpMethod.POST, PASSBOLT_API.RESOURCES, body, undefined, ctx);
 }
 
+/** Deletes a Passbolt resource by ID. */
+export async function resourceDelete(this: IExecuteFunctions, i: number): Promise<JsonObject> {
+	const resourceId = this.getNodeParameter(Param.RESOURCE_ID, i) as string;
+	await passboltApiRequest.call(this, HttpMethod.DELETE, PASSBOLT_API.RESOURCE(resourceId));
+	return DELETE_SUCCESS;
+}
+
 /**
  * Fetches a single Passbolt resource by ID and decrypts its secret.
  *
