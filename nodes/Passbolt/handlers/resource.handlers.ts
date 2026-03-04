@@ -161,3 +161,55 @@ export async function resourceGetAll(this: IExecuteFunctions, i: number): Promis
 
 	return resources as JsonObject[];
 }
+
+/**
+ * Updates an existing Passbolt resource.
+ *
+ * When `password` is provided, fetches the existing resource to preserve the
+ * current description (if not explicitly overridden), re-encrypts the secret,
+ * and includes it in the PUT body.
+ */
+export async function resourceUpdate(this: IExecuteFunctions, i: number): Promise<JsonObject> {
+	const ctx = await getCredentialsAndPrivateKey(this);
+	const resourceId = this.getNodeParameter(Param.RESOURCE_ID, i) as string;
+	const updateFields = this.getNodeParameter(Param.UPDATE_FIELDS, i) as {
+		name?: string;
+		description?: string;
+		password?: string;
+		uri?: string;
+		username?: string;
+	};
+
+	const body: Record<string, unknown> = {};
+	if (updateFields.name) body.name = updateFields.name;
+	if (updateFields.uri) body.uri = updateFields.uri;
+	if (updateFields.username) body.username = updateFields.username;
+
+	if (updateFields.password) {
+		const existing = await passboltApiRequest.call(
+			this,
+			HttpMethod.GET,
+			PASSBOLT_API.RESOURCE(resourceId),
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		const secretPayload = JSON.stringify({
+			password: updateFields.password,
+			description: updateFields.description ?? (existing.description as string) ?? '',
+		});
+
+		const encryptedSecret = await encryptSecretForSelfWithCtx(secretPayload, ctx);
+		body.secrets = [{ data: encryptedSecret }];
+	}
+
+	return passboltApiRequest.call(
+		this,
+		HttpMethod.PUT,
+		PASSBOLT_API.RESOURCE(resourceId),
+		body,
+		undefined,
+		ctx,
+	);
+}

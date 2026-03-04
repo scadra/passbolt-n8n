@@ -7,7 +7,7 @@ import type {
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
-import { resourceCreate, resourceGet, resourceGetAll } from './handlers/resource.handlers';
+import { resourceCreate, resourceGet, resourceGetAll, resourceUpdate } from './handlers/resource.handlers';
 
 import { resourceOperations, resourceFields } from './descriptions/ResourceDescription';
 import { Resource } from './constants';
@@ -75,6 +75,7 @@ export class Passbolt implements INodeType {
 				create: resourceCreate,
 				get: resourceGet,
 				getAll: resourceGetAll,
+				update: resourceUpdate,
 			},
 		};
 
