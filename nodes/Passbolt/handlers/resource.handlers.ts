@@ -20,6 +20,52 @@ import {
 import { Param } from './utils';
 
 /**
+ * Creates a new Passbolt resource (password entry).
+ *
+ * Encodes the secret as `{ password, description }` JSON, self-encrypts it,
+ * and POSTs to `/resources.json`. Requires the `password-and-description`
+ * resource type to be available on the server.
+ */
+export async function resourceCreate(this: IExecuteFunctions, i: number): Promise<JsonObject> {
+	const ctx = await getCredentialsAndPrivateKey(this);
+
+	const name = this.getNodeParameter(Param.NAME, i) as string;
+	const password = this.getNodeParameter(Param.PASSWORD, i) as string;
+	const additionalFields = this.getNodeParameter(Param.ADDITIONAL_FIELDS, i) as {
+		description?: string;
+		folder_parent_id?: string;
+		uri?: string;
+		username?: string;
+	};
+
+	const resourceTypeId = await getResourceTypeId.call(
+		this,
+		ResourceTypeSlug.PASSWORD_AND_DESCRIPTION,
+		ctx,
+	);
+
+	const secretPayload = JSON.stringify({
+		password,
+		description: additionalFields.description ?? '',
+	});
+
+	const encryptedSecret = await encryptSecretForSelfWithCtx(secretPayload, ctx);
+
+	const body: Record<string, unknown> = {
+		name,
+		resource_type_id: resourceTypeId,
+		secrets: [{ data: encryptedSecret }],
+	};
+	if (additionalFields.uri) body.uri = additionalFields.uri;
+	if (additionalFields.username) body.username = additionalFields.username;
+	if (additionalFields.folder_parent_id) {
+		body.folder_parent_id = additionalFields.folder_parent_id;
+	}
+
+	return passboltApiRequest.call(this, HttpMethod.POST, PASSBOLT_API.RESOURCES, body, undefined, ctx);
+}
+
+/**
  * Fetches a single Passbolt resource by ID and decrypts its secret.
  *
  * Requests the resource with `contain[secret]=1`, then decrypts the first
