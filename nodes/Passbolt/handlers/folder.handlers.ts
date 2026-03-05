@@ -16,6 +16,12 @@ export async function folderCreate(this: IExecuteFunctions, i: number): Promise<
 	return passboltApiRequest.call(this, HttpMethod.POST, PASSBOLT_API.FOLDERS, body);
 }
 
+export async function folderDelete(this: IExecuteFunctions, i: number): Promise<JsonObject> {
+	const folderId = this.getNodeParameter(Param.FOLDER_ID, i) as string;
+	await passboltApiRequest.call(this, HttpMethod.DELETE, PASSBOLT_API.FOLDER(folderId));
+	return DELETE_SUCCESS;
+}
+
 export async function folderGet(this: IExecuteFunctions, i: number): Promise<JsonObject> {
 	const folderId = this.getNodeParameter(Param.FOLDER_ID, i) as string;
 	return passboltApiRequest.call(this, HttpMethod.GET, PASSBOLT_API.FOLDER(folderId));
