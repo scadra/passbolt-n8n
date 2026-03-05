@@ -8,8 +8,10 @@ import type {
 import { NodeOperationError } from 'n8n-workflow';
 
 import { resourceCreate, resourceDelete, resourceGet, resourceGetAll, resourceUpdate } from './handlers/resource.handlers';
+import { folderGet, folderGetAll } from './handlers/folder.handlers';
 
 import { resourceOperations, resourceFields } from './descriptions/ResourceDescription';
+import { folderOperations, folderFields } from './descriptions/FolderDescription';
 import { Resource } from './constants';
 import { Param } from './handlers/utils';
 
@@ -50,12 +52,15 @@ export class Passbolt implements INodeType {
 				type: 'options',
 				noDataExpression: true,
 				options: [
+					{ name: 'Folder', value: Resource.FOLDER },
 					{ name: 'Password (Resource)', value: Resource.RESOURCE },
 				],
 				default: Resource.RESOURCE,
 			},
 			...resourceOperations,
 			...resourceFields,
+			...folderOperations,
+			...folderFields,
 		],
 	};
 
@@ -77,6 +82,10 @@ export class Passbolt implements INodeType {
 				get: resourceGet,
 				getAll: resourceGetAll,
 				update: resourceUpdate,
+			},
+			[Resource.FOLDER]: {
+				get: folderGet,
+				getAll: folderGetAll,
 			},
 		};
 
