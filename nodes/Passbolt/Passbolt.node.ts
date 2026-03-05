@@ -8,7 +8,7 @@ import type {
 import { NodeOperationError } from 'n8n-workflow';
 
 import { resourceCreate, resourceDelete, resourceGet, resourceGetAll, resourceUpdate } from './handlers/resource.handlers';
-import { folderGet, folderGetAll } from './handlers/folder.handlers';
+import { folderCreate, folderGet, folderGetAll, folderUpdate } from './handlers/folder.handlers';
 
 import { resourceOperations, resourceFields } from './descriptions/ResourceDescription';
 import { folderOperations, folderFields } from './descriptions/FolderDescription';
@@ -84,8 +84,10 @@ export class Passbolt implements INodeType {
 				update: resourceUpdate,
 			},
 			[Resource.FOLDER]: {
+				create: folderCreate,
 				get: folderGet,
 				getAll: folderGetAll,
+				update: folderUpdate,
 			},
 		};
 
