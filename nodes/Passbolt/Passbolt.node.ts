@@ -11,11 +11,15 @@ import { resourceCreate, resourceDelete, resourceGet, resourceGetAll, resourceUp
 import { folderCreate, folderDelete, folderGet, folderGetAll, folderUpdate } from './handlers/folder.handlers';
 import { userGet, userGetAll } from './handlers/user.handlers';
 import { groupGet, groupGetAll } from './handlers/group.handlers';
+import { shareResource } from './handlers/share.handlers';
+import { decrypt } from './handlers/utility.handlers';
 
 import { resourceOperations, resourceFields } from './descriptions/ResourceDescription';
 import { folderOperations, folderFields } from './descriptions/FolderDescription';
 import { userOperations, userFields } from './descriptions/UserDescription';
 import { groupOperations, groupFields } from './descriptions/GroupDescription';
+import { shareOperations, shareFields } from './descriptions/ShareDescription';
+import { utilityOperations, utilityFields } from './descriptions/UtilityDescription';
 import { Resource } from './constants';
 import { Param } from './handlers/utils';
 
@@ -59,7 +63,9 @@ export class Passbolt implements INodeType {
 					{ name: 'Folder', value: Resource.FOLDER },
 					{ name: 'Group', value: Resource.GROUP },
 					{ name: 'Password (Resource)', value: Resource.RESOURCE },
+					{ name: 'Share', value: Resource.SHARE },
 					{ name: 'User', value: Resource.USER },
+					{ name: 'Utility', value: Resource.UTILITY },
 				],
 				default: Resource.RESOURCE,
 			},
@@ -71,6 +77,10 @@ export class Passbolt implements INodeType {
 			...userFields,
 			...groupOperations,
 			...groupFields,
+			...shareOperations,
+			...shareFields,
+			...utilityOperations,
+			...utilityFields,
 		],
 	};
 
@@ -107,6 +117,12 @@ export class Passbolt implements INodeType {
 			[Resource.GROUP]: {
 				get: groupGet,
 				getAll: groupGetAll,
+			},
+			[Resource.SHARE]: {
+				shareResource,
+			},
+			[Resource.UTILITY]: {
+				decrypt,
 			},
 		};
 
