@@ -12,12 +12,14 @@ import { folderCreate, folderDelete, folderGet, folderGetAll, folderUpdate } fro
 import { userGet, userGetAll } from './handlers/user.handlers';
 import { groupGet, groupGetAll } from './handlers/group.handlers';
 import { shareResource } from './handlers/share.handlers';
+import { decrypt } from './handlers/utility.handlers';
 
 import { resourceOperations, resourceFields } from './descriptions/ResourceDescription';
 import { folderOperations, folderFields } from './descriptions/FolderDescription';
 import { userOperations, userFields } from './descriptions/UserDescription';
 import { groupOperations, groupFields } from './descriptions/GroupDescription';
 import { shareOperations, shareFields } from './descriptions/ShareDescription';
+import { utilityOperations, utilityFields } from './descriptions/UtilityDescription';
 import { Resource } from './constants';
 import { Param } from './handlers/utils';
 
@@ -63,6 +65,7 @@ export class Passbolt implements INodeType {
 					{ name: 'Password (Resource)', value: Resource.RESOURCE },
 					{ name: 'Share', value: Resource.SHARE },
 					{ name: 'User', value: Resource.USER },
+					{ name: 'Utility', value: Resource.UTILITY },
 				],
 				default: Resource.RESOURCE,
 			},
@@ -76,6 +79,8 @@ export class Passbolt implements INodeType {
 			...groupFields,
 			...shareOperations,
 			...shareFields,
+			...utilityOperations,
+			...utilityFields,
 		],
 	};
 
@@ -115,6 +120,9 @@ export class Passbolt implements INodeType {
 			},
 			[Resource.SHARE]: {
 				shareResource,
+			},
+			[Resource.UTILITY]: {
+				decrypt,
 			},
 		};
 
